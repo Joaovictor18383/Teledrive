@@ -1,0 +1,101 @@
+name: Importar código-fonte TeleCloud
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "imports/TeleCloud-source.zip"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: telecloud-source-import
+  cancel-in-progress: false
+
+jobs:
+  import:
+    name: Extrair e organizar o código-fonte
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validar e extrair o ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path, PurePosixPath
+          import stat
+          import zipfile
+
+          archive = Path("imports/TeleCloud-source.zip")
+          if not archive.is_file():
+              raise SystemExit("Arquivo de importação não encontrado.")
+          expected = "TeleCloud/"
+          skip_dirs = {".git", "node_modules", "target", "dist", "dist-ssr", "gen", ".updater", "__pycache__", ".idea"}
+          skip_suffixes = {".key", ".jks", ".keystore", ".sqlite", ".sqlite3", ".sqlite3-wal", ".sqlite3-shm"}
+          extracted = 0
+          with zipfile.ZipFile(archive) as z:
+              for item in z.infolist():
+                  raw = item.filename.replace("\\", "/")
+                  path = PurePosixPath(raw)
+                  if not raw.startswith(expected) or len(path.parts) < 2:
+                      continue
+                  rel = PurePosixPath(*path.parts[1:])
+                  if rel.is_absolute() or any(part in ("", ".", "..") for part in rel.parts):
+                      raise SystemExit(f"Caminho inseguro no ZIP: {item.filename}")
+                  if any(part in skip_dirs for part in rel.parts):
+                      continue
+                  if rel.suffix.lower() in skip_suffixes or rel.name == "session.bin" or rel.name.endswith(".log"):
+                      continue
+                  if rel.name.startswith(".env") and rel.name != ".env.example":
+                      continue
+                  mode = item.external_attr >> 16
+                  if stat.S_ISLNK(mode):
+                      raise SystemExit(f"Link simbólico não permitido: {item.filename}")
+                  if item.is_dir():
+                      continue
+                  destination = Path(*rel.parts)
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  destination.write_bytes(z.read(item))
+                  extracted += 1
+          archive.unlink()
+          if extracted < 50:
+              raise SystemExit(f"Importação suspeita: apenas {extracted} arquivos extraídos.")
+          Path("imports").rmdir()
+          print(f"Importação concluída: {extracted} arquivos de código/documentação.")
+          PY
+
+      - name: Apontar o aplicativo para este repositório
+        run: |
+          node tools/definir-repositorio.mjs Joaovictor18383/Teledrive
+          node tools/definir-repositorio.mjs --check
+          node tools/set-version.mjs --check
+
+      - name: Remover o fluxo temporário de importação
+        run: rm .github/workflows/source-import.yml
+
+      - name: Salvar código organizado no GitHub
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: importar código-fonte TeleCloud 1.0.0"
+          git push origin HEAD:main
+
+      - name: Disparar verificações do projeto
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --ref main
