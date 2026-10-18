@@ -29,17 +29,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat imports/payload/*.b64 | base64 --decode > /tmp/telecloud-source.tar.gz
+          cat imports/payload/*.b64 | base64 --decode > /tmp/telecloud-source.tar.xz
           python3 - <<'PY'
           import pathlib
           import tarfile
 
-          archive = pathlib.Path("/tmp/telecloud-source.tar.gz")
+          archive = pathlib.Path("/tmp/telecloud-source.tar.xz")
           root = pathlib.Path(".").resolve()
           allowed_skip = {".git", "node_modules", "target", "dist", "dist-ssr", "gen", ".updater", "__pycache__", ".idea"}
           blocked_suffixes = {".key", ".jks", ".keystore", ".sqlite", ".sqlite3", ".sqlite3-wal", ".sqlite3-shm"}
           count = 0
-          with tarfile.open(archive, "r:gz") as tf:
+          with tarfile.open(archive, "r:xz") as tf:
               for member in tf.getmembers():
                   name = member.name.replace("\\", "/")
                   path = pathlib.PurePosixPath(name)
